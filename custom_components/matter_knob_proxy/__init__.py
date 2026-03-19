@@ -57,16 +57,10 @@ from homeassistant.components.cover import (
     SERVICE_SET_COVER_POSITION,
 )
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
     LOGGER_NAME,
-    CONF_KNOB_DEVICE_ID,
-    CONF_DIMMER_TARGET,
-    CONF_CW_TARGET,
-    CONF_CURTAIN1_TARGET,
-    CONF_CURTAIN2_TARGET,
     ENDPOINT_DIMMER,
     ENDPOINT_CW,
     ENDPOINT_CURTAIN_1,
@@ -152,15 +146,12 @@ class KnobProxyCoordinator:
         """Initialize the coordinator."""
         self.hass = hass
         self.entry = entry
-        self._device_id = entry.data[CONF_KNOB_DEVICE_ID]
-        self._node_id = entry.data.get("node_id")
         
-        # Entity mappings (endpoint_id -> target_entity_id)
-        self._mappings: KnobMapping = {}
+        # Source entities (endpoint_id -> source_entity_id) - the "knob" inputs
+        self._source_entities: dict[int, str | None] = entry.data.get("source_entities", {})
         
-        # Knob entity IDs (endpoint_id -> knob_entity_id)
-        # These are the entities created by the native Matter integration
-        self._knob_entities: dict[int, str] = {}
+        # Target entities (endpoint_id -> target_entity_id) - what to control
+        self._mappings: KnobMapping = entry.data.get("target_entities", {})
         
         # Listener handles for cleanup
         self._listeners: ListenerHandles = {}
@@ -175,146 +166,53 @@ class KnobProxyCoordinator:
 
     async def async_setup(self) -> None:
         """Set up the coordinator and establish listeners."""
-        _LOGGER.info("Setting up Matter Knob Proxy for device %s", self._device_id)
+        _LOGGER.info("Setting up Matter Knob Proxy")
+        _LOGGER.debug("Source entities: %s", self._source_entities)
+        _LOGGER.debug("Target entities: %s", self._mappings)
 
-        # Load mappings from config entry options
-        self._load_mappings()
-
-        # Discover knob entities from device registry
-        await self._discover_knob_entities()
-
-        # Set up forward flow listeners (Knob → Target)
+        # Set up forward flow listeners (Source → Target)
         self._setup_forward_listeners()
 
-        # Set up reverse flow listeners (Target → Knob)
+        # Set up reverse flow listeners (Target → Source)
         self._setup_reverse_listeners()
 
-        # Perform initial sync (Target → Knob)
+        # Perform initial sync (Target → Source)
         await self._perform_initial_sync()
 
-        _LOGGER.info("Matter Knob Proxy setup complete for %s", self._device_id)
+        _LOGGER.info("Matter Knob Proxy setup complete")
 
     def _load_mappings(self) -> None:
-        """Load entity mappings from config entry options."""
-        options = self.entry.options
-        
-        self._mappings = {
-            ENDPOINT_DIMMER: options.get(CONF_DIMMER_TARGET),
-            ENDPOINT_CW: options.get(CONF_CW_TARGET),
-            ENDPOINT_CURTAIN_1: options.get(CONF_CURTAIN1_TARGET),
-            ENDPOINT_CURTAIN_2: options.get(CONF_CURTAIN2_TARGET),
-        }
+        """Load entity mappings from config entry data (legacy - not used anymore)."""
+        pass
 
-        _LOGGER.debug("Loaded mappings: %s", self._mappings)
-
-    async def _discover_knob_entities(self) -> None:
-        """Discover the knob's entities from the device registry.
-        
-        The native Matter integration creates entities for each endpoint.
-        We need to find these to listen for their state changes.
-        """
-        device_registry = dr.async_get(self.hass)
-        device = device_registry.async_get(self._device_id)
-
-        if not device:
-            _LOGGER.warning("Knob device %s not found in registry", self._device_id)
-            return
-
-        # Get entity registry to find entity IDs
-        from homeassistant.helpers import entity_registry as er
-        entity_registry = er.async_get(self.hass)
-
-        # Find entities associated with this device
-        for entity_entry in entity_registry.entities.values():
-            if entity_entry.device_id != self._device_id:
-                continue
-
-            entity_id = entity_entry.entity_id
-            
-            # Determine endpoint based on entity domain and unique_id
-            # Matter entities typically have unique_id format: node_id-endpoint_id-cluster_id
-            unique_id = entity_entry.unique_id or ""
-            
-            # Try to extract endpoint from unique_id
-            endpoint_id = self._extract_endpoint_from_unique_id(unique_id)
-            
-            # Fallback: infer from entity name/domain
-            if endpoint_id is None:
-                endpoint_id = self._infer_endpoint_from_entity(entity_id, entity_entry)
-
-            if endpoint_id:
-                self._knob_entities[endpoint_id] = entity_id
-                _LOGGER.debug("Mapped endpoint %d to entity %s", endpoint_id, entity_id)
-
-        _LOGGER.debug("Discovered knob entities: %s", self._knob_entities)
-
-    def _extract_endpoint_from_unique_id(self, unique_id: str) -> int | None:
-        """Extract endpoint ID from Matter entity unique_id.
-        
-        Matter entity unique_id format: "node_id-endpoint_id-cluster_id"
-        Example: "12345-1-8" for node 12345, endpoint 1, cluster 0x0008
-        """
-        if not unique_id or "-" not in unique_id:
-            return None
-
-        try:
-            parts = unique_id.split("-")
-            if len(parts) >= 2:
-                endpoint = int(parts[1])
-                # Validate it's one of our known endpoints
-                if endpoint in [ENDPOINT_DIMMER, ENDPOINT_CW, ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2]:
-                    return endpoint
-        except (ValueError, IndexError):
-            pass
-
-        return None
-
-    def _infer_endpoint_from_entity(
-        self, entity_id: str, entity_entry: Any
-    ) -> int | None:
-        """Infer endpoint from entity domain and name patterns.
-        
-        Fallback when unique_id parsing fails.
-        """
-        name_lower = (entity_entry.original_name or entity_id).lower()
-
-        if entity_id.startswith("light."):
-            if "dimmer" in name_lower or "endpoint_1" in name_lower:
-                return ENDPOINT_DIMMER
-            if "cw" in name_lower or "endpoint_2" in name_lower:
-                return ENDPOINT_CW
-
-        if entity_id.startswith("cover."):
-            if "curtain_1" in name_lower or "endpoint_3" in name_lower:
-                return ENDPOINT_CURTAIN_1
-            if "curtain_2" in name_lower or "endpoint_4" in name_lower:
-                return ENDPOINT_CURTAIN_2
-
-        return None
+    # Entity discovery removed - we now use configured source entities directly
 
     def _setup_forward_listeners(self) -> None:
-        """Set up listeners for forward flow (Knob → Target).
+        """Set up listeners for forward flow (Source → Target).
         
-        Listens for state changes on knob entities and forwards commands
+        Listens for state changes on source entities and forwards commands
         to mapped target entities.
         """
-        for endpoint_id, knob_entity in self._knob_entities.items():
+        for endpoint_id, source_entity in self._source_entities.items():
+            if not source_entity:
+                continue  # No source configured for this endpoint
+                
             target_entity = self._mappings.get(endpoint_id)
             
             if not target_entity:
-                continue  # No mapping configured for this endpoint
+                continue  # No target configured for this endpoint
 
-            # Create listener for this knob entity
+            # Create listener for this source entity
             unsub = async_track_state_change_event(
                 self.hass,
-                [knob_entity],
-                self._create_forward_handler(endpoint_id, knob_entity, target_entity),
+                [source_entity],
+                self._create_forward_handler(endpoint_id, source_entity, target_entity),
             )
             
             self._listeners[f"forward_{endpoint_id}"] = unsub
             _LOGGER.debug(
                 "Forward listener: %s (endpoint %d) → %s",
-                knob_entity, endpoint_id, target_entity
+                source_entity, endpoint_id, target_entity
             )
 
     def _create_forward_handler(
@@ -564,45 +462,21 @@ class KnobProxyCoordinator:
         attribute_id: int,
         value: int,
     ) -> None:
-        """Write an attribute to the Matter Server.
+        """Write an attribute to the source entity (for bidirectional sync).
         
-        This method communicates with the Matter Server via WebSocket to
-        update the knob's internal state for visual feedback.
-        
-        Note: In production, you may need to adjust this based on your
-        Matter Server setup (Supervisor addon vs standalone).
+        For non-Matter sources, this attempts to set the state attribute directly.
+        Note: This won't actually change the physical device unless the source
+        supports writing back.
         """
-        if not self._node_id:
-            _LOGGER.warning("Cannot write Matter attribute: node_id not known")
+        source_entity = self._source_entities.get(endpoint_id)
+        if not source_entity:
             return
-
-        # Try to use the matter integration's client if available
-        matter_data = self.hass.data.get("matter")
-        if matter_data and hasattr(matter_data, "client"):
-            try:
-                client = matter_data.client
-                await client.write_attribute(
-                    node_id=self._node_id,
-                    endpoint_id=endpoint_id,
-                    cluster_id=cluster_id,
-                    attribute_id=attribute_id,
-                    value=value,
-                )
-                _LOGGER.debug(
-                    "Wrote attribute to Matter Server: node=%s, endpoint=%d, "
-                    "cluster=0x%04X, attr=0x%04X, value=%d",
-                    self._node_id, endpoint_id, cluster_id, attribute_id, value
-                )
-                return
-            except Exception as err:
-                _LOGGER.debug("Matter client write failed: %s", err)
-
-        # Fallback: Log the intended write for debugging
-        # In a real implementation, you'd establish direct WebSocket connection here
+        
+        # Log the intended write - for non-Matter sources, we can't really write back
+        # unless the entity supports a specific service
         _LOGGER.debug(
-            "Matter write (no client available): node=%s, endpoint=%d, "
-            "cluster=0x%04X, attr=0x%04X, value=%d",
-            self._node_id, endpoint_id, cluster_id, attribute_id, value
+            "Would write to source %s: endpoint=%d, cluster=0x%04X, value=%d",
+            source_entity, endpoint_id, cluster_id, value
         )
 
     async def _perform_initial_sync(self) -> None:

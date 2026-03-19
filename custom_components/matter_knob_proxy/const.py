@@ -29,6 +29,19 @@ CONF_CW_TARGET = "cw_target"
 CONF_CURTAIN1_TARGET = "curtain1_target"
 CONF_CURTAIN2_TARGET = "curtain2_target"
 
+# Source entity configuration keys
+CONF_SOURCE_DIMMER = "source_dimmer"
+CONF_SOURCE_CW = "source_cw"
+CONF_SOURCE_CURTAIN1 = "source_curtain1"
+CONF_SOURCE_CURTAIN2 = "source_curtain2"
+
+ENDPOINT_SOURCE_MAP = {
+    ENDPOINT_DIMMER: CONF_SOURCE_DIMMER,
+    ENDPOINT_CW: CONF_SOURCE_CW,
+    ENDPOINT_CURTAIN_1: CONF_SOURCE_CURTAIN1,
+    ENDPOINT_CURTAIN_2: CONF_SOURCE_CURTAIN2,
+}
+
 # Mapping of endpoint IDs to config keys
 ENDPOINT_CONFIG_MAP = {
     ENDPOINT_DIMMER: CONF_DIMMER_TARGET,

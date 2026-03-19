@@ -15,21 +15,18 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
 )
-from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
-    DEFAULT_VID,
-    DEFAULT_PID,
-    CONF_KNOB_DEVICE_ID,
     CONF_DIMMER_TARGET,
     CONF_CW_TARGET,
     CONF_CURTAIN1_TARGET,
     CONF_CURTAIN2_TARGET,
+    CONF_SOURCE_DIMMER,
+    CONF_SOURCE_CW,
+    CONF_SOURCE_CURTAIN1,
+    CONF_SOURCE_CURTAIN2,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,92 +37,82 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def __init__(self) -> None:
-        """Initialize the config flow."""
-        self._knob_device_id: str | None = None
-        self._knob_node_id: str | None = None
-
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step to select a knob device."""
+        """Handle the initial step to select source and target entities."""
         errors: dict[str, str] = {}
 
-        # Check if Matter integration is loaded
-        if "matter" not in self.hass.config.components:
-            return self.async_abort(reason="matter_not_loaded")
-
-        # Discover available Matter knobs
-        available_knobs = await self._discover_knobs()
-
-        if not available_knobs:
-            return self.async_abort(reason="no_knobs_found")
-
         if user_input is not None:
-            device_id = user_input[CONF_KNOB_DEVICE_ID]
+            # Validate that at least one source-target pair is configured
+            has_source = any([
+                user_input.get(CONF_SOURCE_DIMMER),
+                user_input.get(CONF_SOURCE_CW),
+                user_input.get(CONF_SOURCE_CURTAIN1),
+                user_input.get(CONF_SOURCE_CURTAIN2),
+            ])
             
-            # Check if this knob is already configured
-            await self.async_set_unique_id(device_id)
-            self._abort_if_unique_id_configured()
-
-            # Store device info and proceed to entity mapping
-            self._knob_device_id = device_id
-            knob_info = available_knobs[device_id]
-            self._knob_node_id = knob_info.get("node_id")
-
-            return await self.async_step_entities()
-
-        # Build selector options
-        knob_options = [
-            {"value": device_id, "label": info["name"]} 
-            for device_id, info in available_knobs.items()
-        ]
-
-        data_schema = vol.Schema({
-            vol.Required(CONF_KNOB_DEVICE_ID): SelectSelector(
-                SelectSelectorConfig(
-                    options=knob_options,
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            ),
-        })
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=data_schema,
-            errors=errors,
-        )
-
-    async def async_step_entities(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the entity mapping step."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            # Validate that at least one mapping is configured
-            has_mapping = any([
+            has_target = any([
                 user_input.get(CONF_DIMMER_TARGET),
                 user_input.get(CONF_CW_TARGET),
                 user_input.get(CONF_CURTAIN1_TARGET),
                 user_input.get(CONF_CURTAIN2_TARGET),
             ])
 
-            if not has_mapping:
-                errors["base"] = "missing_mappings"
+            if not has_source:
+                errors["base"] = "missing_source"
+            elif not has_target:
+                errors["base"] = "missing_target"
             else:
+                # Build source and target mappings
+                source_entities = {
+                    1: user_input.get(CONF_SOURCE_DIMMER),
+                    2: user_input.get(CONF_SOURCE_CW),
+                    3: user_input.get(CONF_SOURCE_CURTAIN1),
+                    4: user_input.get(CONF_SOURCE_CURTAIN2),
+                }
+                target_entities = {
+                    1: user_input.get(CONF_DIMMER_TARGET),
+                    2: user_input.get(CONF_CW_TARGET),
+                    3: user_input.get(CONF_CURTAIN1_TARGET),
+                    4: user_input.get(CONF_CURTAIN2_TARGET),
+                }
+                
+                # Generate unique ID from first configured source
+                unique_id = None
+                for entity_id in source_entities.values():
+                    if entity_id:
+                        unique_id = entity_id
+                        break
+                
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+
                 # Create the config entry
                 return self.async_create_entry(
-                    title=f"Matter Knob Proxy ({self._knob_device_id})",
+                    title=f"Knob Proxy ({unique_id})",
                     data={
-                        CONF_KNOB_DEVICE_ID: self._knob_device_id,
-                        "node_id": self._knob_node_id,
+                        "source_entities": source_entities,
+                        "target_entities": target_entities,
                     },
-                    options=user_input,
                 )
 
-        # Build the entity selector schema
+        # Build the entity selector schema with sections
         data_schema = vol.Schema({
+            # Source entities (the "knob" inputs)
+            vol.Optional(CONF_SOURCE_DIMMER): EntitySelector(
+                EntitySelectorConfig(domain=LIGHT_DOMAIN)
+            ),
+            vol.Optional(CONF_SOURCE_CW): EntitySelector(
+                EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])
+            ),
+            vol.Optional(CONF_SOURCE_CURTAIN1): EntitySelector(
+                EntitySelectorConfig(domain=COVER_DOMAIN)
+            ),
+            vol.Optional(CONF_SOURCE_CURTAIN2): EntitySelector(
+                EntitySelectorConfig(domain=COVER_DOMAIN)
+            ),
+            # Target entities (what to control)
             vol.Optional(CONF_DIMMER_TARGET): EntitySelector(
                 EntitySelectorConfig(domain=LIGHT_DOMAIN)
             ),
@@ -141,71 +128,14 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         })
 
         return self.async_show_form(
-            step_id="entities",
+            step_id="user",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders={
+                "source_section": "Source Entities (Your Knob Inputs)",
+                "target_section": "Target Entities (What to Control)",
+            },
         )
-
-    async def _discover_knobs(self) -> dict[str, dict[str, Any]]:
-        """Discover available Matter knob devices.
-        
-        Scans the device registry for Matter devices matching the knob's VID/PID.
-        Excludes devices that are already configured.
-        
-        Returns:
-            Dictionary mapping device_id to device info.
-        """
-        device_registry = dr.async_get(self.hass)
-        available_knobs = {}
-
-        # Get existing config entries to exclude already configured knobs
-        existing_devices = {
-            entry.data.get(CONF_KNOB_DEVICE_ID) 
-            for entry in self._async_current_entries()
-        }
-
-        for device in device_registry.devices.values():
-            # Check if this is a Matter device
-            if not any(
-                identifier[0] == "matter" for identifier in device.identifiers
-            ):
-                continue
-
-            # Skip already configured devices
-            if device.id in existing_devices:
-                continue
-
-            # Check manufacturer data for VID/PID match
-            # Matter devices store this in manufacturer/model or via matter integration data
-            manufacturer = device.manufacturer or ""
-            model = device.model or ""
-
-            # Match by VID/PID in manufacturer/model fields
-            # Format varies by Matter integration version, so we check multiple patterns
-            vid_match = DEFAULT_VID.lower() in manufacturer.lower() or \
-                       DEFAULT_VID.lower() in model.lower()
-            pid_match = DEFAULT_PID.lower() in manufacturer.lower() or \
-                       DEFAULT_PID.lower() in model.lower()
-
-            # Also accept if device name contains "knob" (fallback for custom firmware)
-            name_match = "knob" in device.name.lower()
-
-            if (vid_match and pid_match) or name_match or True:
-                # Extract node_id from device identifiers
-                node_id = None
-                for domain, value in device.identifiers:
-                    if domain == "matter":
-                        node_id = value
-                        break
-
-                available_knobs[device.id] = {
-                    "name": device.name or f"Matter Device {device.id[:8]}",
-                    "node_id": node_id,
-                    "manufacturer": manufacturer,
-                    "model": model,
-                }
-
-        return available_knobs
 
     @staticmethod
     @callback
@@ -221,35 +151,76 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        # self.config_entry = config_entry
+        pass
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Build updated source and target mappings
+            source_entities = {
+                1: user_input.get(CONF_SOURCE_DIMMER),
+                2: user_input.get(CONF_SOURCE_CW),
+                3: user_input.get(CONF_SOURCE_CURTAIN1),
+                4: user_input.get(CONF_SOURCE_CURTAIN2),
+            }
+            target_entities = {
+                1: user_input.get(CONF_DIMMER_TARGET),
+                2: user_input.get(CONF_CW_TARGET),
+                3: user_input.get(CONF_CURTAIN1_TARGET),
+                4: user_input.get(CONF_CURTAIN2_TARGET),
+            }
+            
+            # Update the config entry data
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data={
+                    "source_entities": source_entities,
+                    "target_entities": target_entities,
+                },
+            )
+            return self.async_create_entry(title="", data={})
 
-        # Pre-fill current values
-        current_options = self.config_entry.options
-        
+        # Pre-fill current values from entry data
+        current_data = self.config_entry.data
+        source_entities = current_data.get("source_entities", {})
+        target_entities = current_data.get("target_entities", {})
 
         data_schema = vol.Schema({
+            # Source entities
+            vol.Optional(
+                CONF_SOURCE_DIMMER,
+                default=source_entities.get(1)
+            ): EntitySelector(EntitySelectorConfig(domain=LIGHT_DOMAIN)),
+            vol.Optional(
+                CONF_SOURCE_CW,
+                default=source_entities.get(2)
+            ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
+            vol.Optional(
+                CONF_SOURCE_CURTAIN1,
+                default=source_entities.get(3)
+            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            vol.Optional(
+                CONF_SOURCE_CURTAIN2,
+                default=source_entities.get(4)
+            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            # Target entities  
             vol.Optional(
                 CONF_DIMMER_TARGET,
-                default=current_options.get(CONF_DIMMER_TARGET)
+                default=target_entities.get(1)
             ): EntitySelector(EntitySelectorConfig(domain=LIGHT_DOMAIN)),
             vol.Optional(
                 CONF_CW_TARGET,
-                default=current_options.get(CONF_CW_TARGET)
+                default=target_entities.get(2)
             ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_CURTAIN1_TARGET,
-                default=current_options.get(CONF_CURTAIN1_TARGET)
+                default=target_entities.get(3)
             ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
             vol.Optional(
                 CONF_CURTAIN2_TARGET,
-                default=current_options.get(CONF_CURTAIN2_TARGET)
+                default=target_entities.get(4)
             ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
         })
 

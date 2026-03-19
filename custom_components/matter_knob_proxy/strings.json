@@ -21,13 +21,12 @@
       }
     },
     "abort": {
-      "already_configured": "This knob is already configured.",
-      "no_knobs_found": "No unconfigured Matter knob devices found. Please commission your knob first via the Matter integration.",
-      "matter_not_loaded": "The Matter integration is not loaded. Please set up Matter first."
+      "already_configured": "This source is already configured."
     },
     "error": {
       "invalid_entity": "The selected entity is not available or does not exist.",
-      "missing_mappings": "Please configure at least one target entity."
+      "missing_source": "Please configure at least one source entity.",
+      "missing_target": "Please configure at least one target entity."
     }
   },
   "options": {
