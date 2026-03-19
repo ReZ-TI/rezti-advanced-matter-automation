@@ -1,12 +1,14 @@
 {
   "domain": "matter_knob_proxy",
   "name": "Matter Knob Proxy",
-  "codeowners": ["@satyamk"],
+  "codeowners": [
+    "@sam-rez-ti"
+  ],
   "config_flow": true,
   "dependencies": ["matter"],
-  "documentation": "https://gitee.com/satyamk/rezti-advanced-matter-automation/blob/main/README.md",
+  "documentation": "https://github.com/rez-ti/rezti-advanced-matter-automation/blob/main/README.md",
   "iot_class": "local_push",
-  "issue_tracker": "https://gitee.com/satyamk/rezti-advanced-matter-automation/issues",
+  "issue_tracker": "https://github.com/rez-ti/rezti-advanced-matter-automation/issues",
   "requirements": [],
   "version": "1.0.0"
 }

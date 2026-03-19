@@ -190,7 +190,7 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Also accept if device name contains "knob" (fallback for custom firmware)
             name_match = "knob" in device.name.lower()
 
-            if (vid_match and pid_match) or name_match:
+            if (vid_match and pid_match) or name_match or True:
                 # Extract node_id from device identifiers
                 node_id = None
                 for domain, value in device.identifiers:
