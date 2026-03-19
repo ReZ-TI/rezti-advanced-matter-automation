@@ -1,0 +1,35 @@
+# Services for Matter Knob Proxy
+
+# Force a complete bidirectional sync between all mapped entities
+# and their corresponding knob endpoints
+sync_all:
+  name: Sync All
+  description: Force a complete sync between all mapped targets and the knob.
+  fields:
+    config_entry_id:
+      name: Config Entry
+      description: The Matter Knob Proxy configuration entry to sync (optional, defaults to all).
+      example: "01ABC123DEF456"
+      selector:
+        text:
+
+# Sync a specific knob endpoint with its target
+sync_endpoint:
+  name: Sync Endpoint
+  description: Force sync for a specific knob endpoint.
+  fields:
+    config_entry_id:
+      name: Config Entry
+      description: The Matter Knob Proxy configuration entry.
+      required: true
+      selector:
+        text:
+    endpoint_id:
+      name: Endpoint ID
+      description: The endpoint to sync (1=Dimmer, 2=CW, 3=Curtain 1, 4=Curtain 2).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box

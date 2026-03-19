@@ -1,0 +1,49 @@
+{
+  "title": "Matter Knob Proxy",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select Knob Device",
+        "description": "Choose the Matter knob device to configure as a proxy controller.",
+        "data": {
+          "knob_device_id": "Knob Device"
+        }
+      },
+      "entities": {
+        "title": "Configure Target Entities",
+        "description": "Map each knob control to a Home Assistant entity.",
+        "data": {
+          "dimmer_target": "Dimmer Control (Light)",
+          "cw_target": "CW Control (Light or Number)",
+          "curtain1_target": "Curtain 1 Control (Cover)",
+          "curtain2_target": "Curtain 2 Control (Cover)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This knob is already configured.",
+      "no_knobs_found": "No unconfigured Matter knob devices found. Please commission your knob first via the Matter integration.",
+      "matter_not_loaded": "The Matter integration is not loaded. Please set up Matter first."
+    },
+    "error": {
+      "invalid_entity": "The selected entity is not available or does not exist.",
+      "missing_mappings": "Please configure at least one target entity."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update Target Entities",
+        "description": "Change the entity mappings for your knob.",
+        "data": {
+          "dimmer_target": "Dimmer Control (Light)",
+          "cw_target": "CW Control (Light or Number)",
+          "curtain1_target": "Curtain 1 Control (Cover)",
+          "curtain2_target": "Curtain 2 Control (Cover)"
+        }
+      }
+    }
+  },
+  "entity": {},
+  "services": {}
+}

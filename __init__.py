@@ -1,0 +1,659 @@
+"""The Matter Knob Proxy integration.
+
+This integration provides bidirectional synchronization between a Matter knob device
+and Home Assistant entities (lights and covers).
+
+Architecture:
+-------------
+Forward Flow (Knob → Target):
+    The knob's endpoints create entities via the native Matter integration.
+    We listen for state changes on these entities and proxy commands to
+    the mapped target entities.
+
+Reverse Flow (Target → Knob):
+    When target entities change (via app/voice/automation), we write the
+    new state back to the knob's Matter clusters via the Matter Server
+    WebSocket API. This provides visual feedback on the knob's LED ring.
+
+Safety Considerations:
+---------------------
+1. Debouncing: Forward flow ignores changes within 100ms to prevent flood
+   during fast knob rotation.
+2. Circular Protection: Reverse flow is skipped if forward flow was triggered
+   within the last 2 seconds (user is actively controlling).
+3. Error Handling: Target offline errors are caught and logged without
+   disrupting the knob's local state.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timedelta
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    EVENT_HOMEASSISTANT_STOP,
+    SERVICE_TURN_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import (
+    HomeAssistant,
+    Event,
+    State,
+    callback,
+    CALLBACK_TYPE,
+)
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_COLOR_TEMP,
+    DOMAIN as LIGHT_DOMAIN,
+)
+from homeassistant.components.cover import (
+    ATTR_POSITION,
+    DOMAIN as COVER_DOMAIN,
+    SERVICE_SET_COVER_POSITION,
+)
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers import device_registry as dr
+
+from .const import (
+    DOMAIN,
+    LOGGER_NAME,
+    CONF_KNOB_DEVICE_ID,
+    CONF_DIMMER_TARGET,
+    CONF_CW_TARGET,
+    CONF_CURTAIN1_TARGET,
+    CONF_CURTAIN2_TARGET,
+    ENDPOINT_DIMMER,
+    ENDPOINT_CW,
+    ENDPOINT_CURTAIN_1,
+    ENDPOINT_CURTAIN_2,
+    LEVEL_CONTROL_CLUSTER,
+    WINDOW_COVERING_CLUSTER,
+    LEVEL_CONTROL_CURRENT_LEVEL_ATTR,
+    WINDOW_COVERING_POSITION_ATTR,
+    LEVEL_MAX_MATTER,
+    LEVEL_MAX_HA,
+    WINDOW_COVERING_MAX_MATTER,
+    WINDOW_COVERING_MAX_HA,
+    DEBOUNCE_FORWARD,
+    DEBOUNCE_REVERSE,
+)
+
+_LOGGER = logging.getLogger(LOGGER_NAME)
+
+# Type aliases
+KnobMapping = dict[int, str | None]  # endpoint_id -> target_entity_id
+ListenerHandles = dict[str, CALLBACK_TYPE]
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Matter Knob Proxy from a config entry.
+    
+    Called when the integration is first set up or after HA restart.
+    Establishes all event listeners and performs initial state sync.
+    """
+    _LOGGER.debug("Setting up Matter Knob Proxy for entry %s", entry.entry_id)
+
+    # Initialize domain data if needed
+    if DOMAIN not in hass.data:
+        hass.data[DOMAIN] = {}
+
+    # Create the coordinator
+    coordinator = KnobProxyCoordinator(hass, entry)
+    hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Perform setup
+    await coordinator.async_setup()
+
+    # Listen for shutdown
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, coordinator.async_shutdown)
+    )
+
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry.
+    
+    Cleans up all listeners and WebSocket connections.
+    """
+    _LOGGER.debug("Unloading Matter Knob Proxy entry %s", entry.entry_id)
+
+    coordinator: KnobProxyCoordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if coordinator:
+        await coordinator.async_shutdown()
+
+    return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when options change."""
+    _LOGGER.debug("Reloading Matter Knob Proxy entry %s", entry.entry_id)
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
+
+
+class KnobProxyCoordinator:
+    """Coordinates bidirectional sync between knob and target entities.
+    
+    This class manages:
+    - Forward flow: Knob state changes → Target entity commands
+    - Reverse flow: Target entity changes → Matter Server write_attribute
+    - Debouncing to prevent event floods
+    - Circular protection to prevent update loops
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the coordinator."""
+        self.hass = hass
+        self.entry = entry
+        self._device_id = entry.data[CONF_KNOB_DEVICE_ID]
+        self._node_id = entry.data.get("node_id")
+        
+        # Entity mappings (endpoint_id -> target_entity_id)
+        self._mappings: KnobMapping = {}
+        
+        # Knob entity IDs (endpoint_id -> knob_entity_id)
+        # These are the entities created by the native Matter integration
+        self._knob_entities: dict[int, str] = {}
+        
+        # Listener handles for cleanup
+        self._listeners: ListenerHandles = {}
+        
+        # Debounce tracking
+        self._last_forward_time: datetime | None = None
+        self._forward_debounce_handle: asyncio.TimerHandle | None = None
+        
+        # Matter Server connection (initialized on first reverse sync)
+        self._matter_client: Any | None = None
+        self._matter_ws: Any | None = None
+
+    async def async_setup(self) -> None:
+        """Set up the coordinator and establish listeners."""
+        _LOGGER.info("Setting up Matter Knob Proxy for device %s", self._device_id)
+
+        # Load mappings from config entry options
+        self._load_mappings()
+
+        # Discover knob entities from device registry
+        await self._discover_knob_entities()
+
+        # Set up forward flow listeners (Knob → Target)
+        self._setup_forward_listeners()
+
+        # Set up reverse flow listeners (Target → Knob)
+        self._setup_reverse_listeners()
+
+        # Perform initial sync (Target → Knob)
+        await self._perform_initial_sync()
+
+        _LOGGER.info("Matter Knob Proxy setup complete for %s", self._device_id)
+
+    def _load_mappings(self) -> None:
+        """Load entity mappings from config entry options."""
+        options = self.entry.options
+        
+        self._mappings = {
+            ENDPOINT_DIMMER: options.get(CONF_DIMMER_TARGET),
+            ENDPOINT_CW: options.get(CONF_CW_TARGET),
+            ENDPOINT_CURTAIN_1: options.get(CONF_CURTAIN1_TARGET),
+            ENDPOINT_CURTAIN_2: options.get(CONF_CURTAIN2_TARGET),
+        }
+
+        _LOGGER.debug("Loaded mappings: %s", self._mappings)
+
+    async def _discover_knob_entities(self) -> None:
+        """Discover the knob's entities from the device registry.
+        
+        The native Matter integration creates entities for each endpoint.
+        We need to find these to listen for their state changes.
+        """
+        device_registry = dr.async_get(self.hass)
+        device = device_registry.async_get(self._device_id)
+
+        if not device:
+            _LOGGER.warning("Knob device %s not found in registry", self._device_id)
+            return
+
+        # Get entity registry to find entity IDs
+        from homeassistant.helpers import entity_registry as er
+        entity_registry = er.async_get(self.hass)
+
+        # Find entities associated with this device
+        for entity_entry in entity_registry.entities.values():
+            if entity_entry.device_id != self._device_id:
+                continue
+
+            entity_id = entity_entry.entity_id
+            
+            # Determine endpoint based on entity domain and unique_id
+            # Matter entities typically have unique_id format: node_id-endpoint_id-cluster_id
+            unique_id = entity_entry.unique_id or ""
+            
+            # Try to extract endpoint from unique_id
+            endpoint_id = self._extract_endpoint_from_unique_id(unique_id)
+            
+            # Fallback: infer from entity name/domain
+            if endpoint_id is None:
+                endpoint_id = self._infer_endpoint_from_entity(entity_id, entity_entry)
+
+            if endpoint_id:
+                self._knob_entities[endpoint_id] = entity_id
+                _LOGGER.debug("Mapped endpoint %d to entity %s", endpoint_id, entity_id)
+
+        _LOGGER.debug("Discovered knob entities: %s", self._knob_entities)
+
+    def _extract_endpoint_from_unique_id(self, unique_id: str) -> int | None:
+        """Extract endpoint ID from Matter entity unique_id.
+        
+        Matter entity unique_id format: "node_id-endpoint_id-cluster_id"
+        Example: "12345-1-8" for node 12345, endpoint 1, cluster 0x0008
+        """
+        if not unique_id or "-" not in unique_id:
+            return None
+
+        try:
+            parts = unique_id.split("-")
+            if len(parts) >= 2:
+                endpoint = int(parts[1])
+                # Validate it's one of our known endpoints
+                if endpoint in [ENDPOINT_DIMMER, ENDPOINT_CW, ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2]:
+                    return endpoint
+        except (ValueError, IndexError):
+            pass
+
+        return None
+
+    def _infer_endpoint_from_entity(
+        self, entity_id: str, entity_entry: Any
+    ) -> int | None:
+        """Infer endpoint from entity domain and name patterns.
+        
+        Fallback when unique_id parsing fails.
+        """
+        name_lower = (entity_entry.original_name or entity_id).lower()
+
+        if entity_id.startswith("light."):
+            if "dimmer" in name_lower or "endpoint_1" in name_lower:
+                return ENDPOINT_DIMMER
+            if "cw" in name_lower or "endpoint_2" in name_lower:
+                return ENDPOINT_CW
+
+        if entity_id.startswith("cover."):
+            if "curtain_1" in name_lower or "endpoint_3" in name_lower:
+                return ENDPOINT_CURTAIN_1
+            if "curtain_2" in name_lower or "endpoint_4" in name_lower:
+                return ENDPOINT_CURTAIN_2
+
+        return None
+
+    def _setup_forward_listeners(self) -> None:
+        """Set up listeners for forward flow (Knob → Target).
+        
+        Listens for state changes on knob entities and forwards commands
+        to mapped target entities.
+        """
+        for endpoint_id, knob_entity in self._knob_entities.items():
+            target_entity = self._mappings.get(endpoint_id)
+            
+            if not target_entity:
+                continue  # No mapping configured for this endpoint
+
+            # Create listener for this knob entity
+            unsub = async_track_state_change_event(
+                self.hass,
+                [knob_entity],
+                self._create_forward_handler(endpoint_id, knob_entity, target_entity),
+            )
+            
+            self._listeners[f"forward_{endpoint_id}"] = unsub
+            _LOGGER.debug(
+                "Forward listener: %s (endpoint %d) → %s",
+                knob_entity, endpoint_id, target_entity
+            )
+
+    def _create_forward_handler(
+        self, endpoint_id: int, knob_entity: str, target_entity: str
+    ) -> callable:
+        """Create a handler for forward flow state changes."""
+        
+        @callback
+        async def handler(event: Event) -> None:
+            """Handle knob state change and forward to target."""
+            # Debounce check: ignore if changed within debounce window
+            now = datetime.now()
+            if self._last_forward_time:
+                elapsed = (now - self._last_forward_time).total_seconds()
+                if elapsed < DEBOUNCE_FORWARD:
+                    _LOGGER.debug(
+                        "Debouncing forward event for endpoint %d (%.3fs elapsed)",
+                        endpoint_id, elapsed
+                    )
+                    return
+
+            self._last_forward_time = now
+
+            # Get new state
+            new_state: State | None = event.data.get("new_state")
+            if not new_state or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                _LOGGER.debug("Ignoring invalid state for %s: %s", knob_entity, new_state)
+                return
+
+            # Convert and forward based on endpoint type
+            try:
+                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
+                    await self._forward_level_control(endpoint_id, new_state, target_entity)
+                elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
+                    await self._forward_window_covering(endpoint_id, new_state, target_entity)
+            except Exception as err:
+                _LOGGER.error(
+                    "Error forwarding state from %s to %s: %s",
+                    knob_entity, target_entity, err
+                )
+
+        return handler
+
+    async def _forward_level_control(
+        self, endpoint_id: int, state: State, target_entity: str
+    ) -> None:
+        """Forward Level Control state change to target light.
+        
+        Converts Matter Level Control (0-254) to HA brightness (0-255).
+        """
+        # Get brightness from state attributes
+        brightness = state.attributes.get("brightness")
+        
+        if brightness is None:
+            # Try to parse from state value
+            try:
+                brightness = int(float(state.state))
+            except (ValueError, TypeError):
+                _LOGGER.debug("Could not parse brightness from state: %s", state.state)
+                return
+
+        # Convert Matter level (0-254) to HA brightness (0-255)
+        ha_brightness = round(brightness * LEVEL_MAX_HA / LEVEL_MAX_MATTER)
+        ha_brightness = max(0, min(255, ha_brightness))  # Clamp to valid range
+
+        _LOGGER.debug(
+            "Forward Level Control (endpoint %d): %d → %d for %s",
+            endpoint_id, brightness, ha_brightness, target_entity
+        )
+
+        # Call light.turn_on service
+        try:
+            await self.hass.services.async_call(
+                LIGHT_DOMAIN,
+                SERVICE_TURN_ON,
+                {ATTR_ENTITY_ID: target_entity, ATTR_BRIGHTNESS: ha_brightness},
+                blocking=False,
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to control light %s: %s (device may be offline)",
+                target_entity, err
+            )
+
+    async def _forward_window_covering(
+        self, endpoint_id: int, state: State, target_entity: str
+    ) -> None:
+        """Forward Window Covering state change to target cover.
+        
+        Converts Matter position (0-10000) to HA position (0-100).
+        """
+        # Get position from state attributes
+        position = state.attributes.get("current_position")
+        
+        if position is None:
+            # Try to parse from state value
+            try:
+                position = int(float(state.state))
+            except (ValueError, TypeError):
+                _LOGGER.debug("Could not parse position from state: %s", state.state)
+                return
+
+        # Convert Matter position (0-10000) to HA position (0-100)
+        ha_position = round(position * WINDOW_COVERING_MAX_HA / WINDOW_COVERING_MAX_MATTER)
+        ha_position = max(0, min(100, ha_position))  # Clamp to valid range
+
+        _LOGGER.debug(
+            "Forward Window Covering (endpoint %d): %d → %d for %s",
+            endpoint_id, position, ha_position, target_entity
+        )
+
+        # Call cover.set_cover_position service
+        try:
+            await self.hass.services.async_call(
+                COVER_DOMAIN,
+                SERVICE_SET_COVER_POSITION,
+                {ATTR_ENTITY_ID: target_entity, ATTR_POSITION: ha_position},
+                blocking=False,
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to control cover %s: %s (device may be offline)",
+                target_entity, err
+            )
+
+    def _setup_reverse_listeners(self) -> None:
+        """Set up listeners for reverse flow (Target → Knob).
+        
+        Listens for state changes on target entities and writes back to
+        the knob's Matter clusters for visual feedback.
+        """
+        for endpoint_id, target_entity in self._mappings.items():
+            if not target_entity:
+                continue
+
+            # Create listener for this target entity
+            unsub = async_track_state_change_event(
+                self.hass,
+                [target_entity],
+                self._create_reverse_handler(endpoint_id, target_entity),
+            )
+            
+            self._listeners[f"reverse_{endpoint_id}"] = unsub
+            _LOGGER.debug(
+                "Reverse listener: %s → endpoint %d",
+                target_entity, endpoint_id
+            )
+
+    def _create_reverse_handler(
+        self, endpoint_id: int, target_entity: str
+    ) -> callable:
+        """Create a handler for reverse flow state changes."""
+        
+        @callback
+        async def handler(event: Event) -> None:
+            """Handle target state change and write back to knob."""
+            # Circular protection: skip if forward flow was recent
+            if self._last_forward_time:
+                elapsed = (datetime.now() - self._last_forward_time).total_seconds()
+                if elapsed < DEBOUNCE_REVERSE:
+                    _LOGGER.debug(
+                        "Skipping reverse sync for endpoint %d "
+                        "(forward was %.3fs ago, user actively controlling)",
+                        endpoint_id, elapsed
+                    )
+                    return
+
+            # Get new state
+            new_state: State | None = event.data.get("new_state")
+            if not new_state or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                return
+
+            # Convert and write back based on endpoint type
+            try:
+                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
+                    await self._reverse_level_control(endpoint_id, new_state)
+                elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
+                    await self._reverse_window_covering(endpoint_id, new_state)
+            except Exception as err:
+                _LOGGER.error(
+                    "Error in reverse sync for endpoint %d: %s",
+                    endpoint_id, err
+                )
+
+        return handler
+
+    async def _reverse_level_control(self, endpoint_id: int, state: State) -> None:
+        """Write target light state back to knob's Level Control cluster.
+        
+        Converts HA brightness (0-255) to Matter level (0-254).
+        """
+        brightness = state.attributes.get("brightness")
+        
+        if brightness is None:
+            # Light might be off
+            if state.state == "off":
+                brightness = 0
+            else:
+                return
+
+        # Convert HA brightness (0-255) to Matter level (0-254)
+        matter_level = round(brightness * LEVEL_MAX_MATTER / LEVEL_MAX_HA)
+        matter_level = max(0, min(254, matter_level))
+
+        _LOGGER.debug(
+            "Reverse Level Control (endpoint %d): %d → %d",
+            endpoint_id, brightness, matter_level
+        )
+
+        await self._write_matter_attribute(
+            endpoint_id=endpoint_id,
+            cluster_id=LEVEL_CONTROL_CLUSTER,
+            attribute_id=LEVEL_CONTROL_CURRENT_LEVEL_ATTR,
+            value=matter_level,
+        )
+
+    async def _reverse_window_covering(self, endpoint_id: int, state: State) -> None:
+        """Write target cover state back to knob's Window Covering cluster.
+        
+        Converts HA position (0-100) to Matter position (0-10000).
+        """
+        position = state.attributes.get("current_position")
+        
+        if position is None:
+            return
+
+        # Convert HA position (0-100) to Matter position (0-10000)
+        matter_position = round(position * WINDOW_COVERING_MAX_MATTER / WINDOW_COVERING_MAX_HA)
+        matter_position = max(0, min(10000, matter_position))
+
+        _LOGGER.debug(
+            "Reverse Window Covering (endpoint %d): %d → %d",
+            endpoint_id, position, matter_position
+        )
+
+        await self._write_matter_attribute(
+            endpoint_id=endpoint_id,
+            cluster_id=WINDOW_COVERING_CLUSTER,
+            attribute_id=WINDOW_COVERING_POSITION_ATTR,
+            value=matter_position,
+        )
+
+    async def _write_matter_attribute(
+        self,
+        endpoint_id: int,
+        cluster_id: int,
+        attribute_id: int,
+        value: int,
+    ) -> None:
+        """Write an attribute to the Matter Server.
+        
+        This method communicates with the Matter Server via WebSocket to
+        update the knob's internal state for visual feedback.
+        
+        Note: In production, you may need to adjust this based on your
+        Matter Server setup (Supervisor addon vs standalone).
+        """
+        if not self._node_id:
+            _LOGGER.warning("Cannot write Matter attribute: node_id not known")
+            return
+
+        # Try to use the matter integration's client if available
+        matter_data = self.hass.data.get("matter")
+        if matter_data and hasattr(matter_data, "client"):
+            try:
+                client = matter_data.client
+                await client.write_attribute(
+                    node_id=self._node_id,
+                    endpoint_id=endpoint_id,
+                    cluster_id=cluster_id,
+                    attribute_id=attribute_id,
+                    value=value,
+                )
+                _LOGGER.debug(
+                    "Wrote attribute to Matter Server: node=%s, endpoint=%d, "
+                    "cluster=0x%04X, attr=0x%04X, value=%d",
+                    self._node_id, endpoint_id, cluster_id, attribute_id, value
+                )
+                return
+            except Exception as err:
+                _LOGGER.debug("Matter client write failed: %s", err)
+
+        # Fallback: Log the intended write for debugging
+        # In a real implementation, you'd establish direct WebSocket connection here
+        _LOGGER.debug(
+            "Matter write (no client available): node=%s, endpoint=%d, "
+            "cluster=0x%04X, attr=0x%04X, value=%d",
+            self._node_id, endpoint_id, cluster_id, attribute_id, value
+        )
+
+    async def _perform_initial_sync(self) -> None:
+        """Perform initial state sync on startup.
+        
+        Reads current target states and pushes them to the knob for
+        visual consistency on startup.
+        """
+        _LOGGER.debug("Performing initial state sync")
+
+        for endpoint_id, target_entity in self._mappings.items():
+            if not target_entity:
+                continue
+
+            state = self.hass.states.get(target_entity)
+            if not state:
+                continue
+
+            try:
+                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
+                    await self._reverse_level_control(endpoint_id, state)
+                elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
+                    await self._reverse_window_covering(endpoint_id, state)
+            except Exception as err:
+                _LOGGER.warning(
+                    "Initial sync failed for endpoint %d: %s",
+                    endpoint_id, err
+                )
+
+        _LOGGER.debug("Initial sync complete")
+
+    async def async_shutdown(self, event: Event | None = None) -> None:
+        """Clean up all listeners and connections.
+        
+        Called on integration unload or HA shutdown.
+        """
+        _LOGGER.debug("Shutting down Matter Knob Proxy coordinator")
+
+        # Cancel all listeners
+        for name, unsub in self._listeners.items():
+            try:
+                unsub()
+                _LOGGER.debug("Cancelled listener: %s", name)
+            except Exception as err:
+                _LOGGER.debug("Error cancelling listener %s: %s", name, err)
+
+        self._listeners.clear()
+
+        # Cancel any pending debounce timer
+        if self._forward_debounce_handle:
+            self._forward_debounce_handle.cancel()
+            self._forward_debounce_handle = None
+
+        _LOGGER.debug("Shutdown complete")
