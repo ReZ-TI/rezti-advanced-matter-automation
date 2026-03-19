@@ -1,0 +1,12 @@
+{
+  "domain": "matter_knob_proxy",
+  "name": "Matter Knob Proxy",
+  "codeowners": ["@yourusername"],
+  "config_flow": true,
+  "dependencies": ["matter"],
+  "documentation": "https://github.com/yourusername/matter_knob_proxy/blob/main/README.md",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/yourusername/matter_knob_proxy/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
