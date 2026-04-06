@@ -48,7 +48,6 @@ from homeassistant.core import (
 )
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP,
     DOMAIN as LIGHT_DOMAIN,
 )
 from homeassistant.components.cover import (
