@@ -101,29 +101,29 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema({
             # Source entities (the "knob" inputs)
             vol.Optional(CONF_SOURCE_DIMMER): EntitySelector(
-                EntitySelectorConfig(domain=LIGHT_DOMAIN)
+                EntitySelectorConfig(domain=[LIGHT_DOMAIN,NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_SOURCE_CW): EntitySelector(
                 EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_SOURCE_CURTAIN1): EntitySelector(
-                EntitySelectorConfig(domain=COVER_DOMAIN)
+                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_SOURCE_CURTAIN2): EntitySelector(
-                EntitySelectorConfig(domain=COVER_DOMAIN)
+                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
             ),
             # Target entities (what to control)
             vol.Optional(CONF_DIMMER_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=LIGHT_DOMAIN)
+                EntitySelectorConfig(domain=[LIGHT_DOMAIN,NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_CW_TARGET): EntitySelector(
                 EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_CURTAIN1_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=COVER_DOMAIN)
+                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_CURTAIN2_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=COVER_DOMAIN)
+                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
             ),
         })
 
@@ -192,7 +192,7 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_SOURCE_DIMMER,
                 default=source_entities.get(1)
-            ): EntitySelector(EntitySelectorConfig(domain=LIGHT_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_SOURCE_CW,
                 default=source_entities.get(2)
@@ -200,16 +200,16 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_SOURCE_CURTAIN1,
                 default=source_entities.get(3)
-            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_SOURCE_CURTAIN2,
                 default=source_entities.get(4)
-            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])),
             # Target entities  
             vol.Optional(
                 CONF_DIMMER_TARGET,
                 default=target_entities.get(1)
-            ): EntitySelector(EntitySelectorConfig(domain=LIGHT_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_CW_TARGET,
                 default=target_entities.get(2)
@@ -217,11 +217,11 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_CURTAIN1_TARGET,
                 default=target_entities.get(3)
-            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_CURTAIN2_TARGET,
                 default=target_entities.get(4)
-            ): EntitySelector(EntitySelectorConfig(domain=COVER_DOMAIN)),
+            ): EntitySelector(EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])),
         })
 
         return self.async_show_form(

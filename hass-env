@@ -1,0 +1,4 @@
+
+#!/bin/bash
+export HASS_SERVER=$(cat ./server)
+export HASS_TOKEN=$(cat ./token)
