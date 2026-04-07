@@ -20,11 +20,9 @@ from homeassistant.helpers.selector import (
 from .const import (
     DOMAIN,
     CONF_DIMMER_TARGET,
-    CONF_CW_TARGET,
     CONF_CURTAIN1_TARGET,
     CONF_CURTAIN2_TARGET,
     CONF_SOURCE_DIMMER,
-    CONF_SOURCE_CW,
     CONF_SOURCE_CURTAIN1,
     CONF_SOURCE_CURTAIN2,
 )
@@ -47,14 +45,12 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Validate that at least one source-target pair is configured
             has_source = any([
                 user_input.get(CONF_SOURCE_DIMMER),
-                user_input.get(CONF_SOURCE_CW),
                 user_input.get(CONF_SOURCE_CURTAIN1),
                 user_input.get(CONF_SOURCE_CURTAIN2),
             ])
             
             has_target = any([
                 user_input.get(CONF_DIMMER_TARGET),
-                user_input.get(CONF_CW_TARGET),
                 user_input.get(CONF_CURTAIN1_TARGET),
                 user_input.get(CONF_CURTAIN2_TARGET),
             ])
@@ -67,13 +63,11 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Build source and target mappings
                 source_entities = {
                     1: user_input.get(CONF_SOURCE_DIMMER),
-                    2: user_input.get(CONF_SOURCE_CW),
                     3: user_input.get(CONF_SOURCE_CURTAIN1),
                     4: user_input.get(CONF_SOURCE_CURTAIN2),
                 }
                 target_entities = {
                     1: user_input.get(CONF_DIMMER_TARGET),
-                    2: user_input.get(CONF_CW_TARGET),
                     3: user_input.get(CONF_CURTAIN1_TARGET),
                     4: user_input.get(CONF_CURTAIN2_TARGET),
                 }
@@ -101,29 +95,23 @@ class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema({
             # Source entities (the "knob" inputs)
             vol.Optional(CONF_SOURCE_DIMMER): EntitySelector(
-                EntitySelectorConfig(domain=[LIGHT_DOMAIN,NUMBER_DOMAIN])
-            ),
-            vol.Optional(CONF_SOURCE_CW): EntitySelector(
                 EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_SOURCE_CURTAIN1): EntitySelector(
-                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
+                EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_SOURCE_CURTAIN2): EntitySelector(
-                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
+                EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])
             ),
             # Target entities (what to control)
             vol.Optional(CONF_DIMMER_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=[LIGHT_DOMAIN,NUMBER_DOMAIN])
-            ),
-            vol.Optional(CONF_CW_TARGET): EntitySelector(
                 EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_CURTAIN1_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
+                EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])
             ),
             vol.Optional(CONF_CURTAIN2_TARGET): EntitySelector(
-                EntitySelectorConfig(domain=[COVER_DOMAIN,NUMBER_DOMAIN])
+                EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])
             ),
         })
 
@@ -161,13 +149,11 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
             # Build updated source and target mappings
             source_entities = {
                 1: user_input.get(CONF_SOURCE_DIMMER),
-                2: user_input.get(CONF_SOURCE_CW),
                 3: user_input.get(CONF_SOURCE_CURTAIN1),
                 4: user_input.get(CONF_SOURCE_CURTAIN2),
             }
             target_entities = {
                 1: user_input.get(CONF_DIMMER_TARGET),
-                2: user_input.get(CONF_CW_TARGET),
                 3: user_input.get(CONF_CURTAIN1_TARGET),
                 4: user_input.get(CONF_CURTAIN2_TARGET),
             }
@@ -194,10 +180,6 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
                 default=source_entities.get(1)
             ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
-                CONF_SOURCE_CW,
-                default=source_entities.get(2)
-            ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
-            vol.Optional(
                 CONF_SOURCE_CURTAIN1,
                 default=source_entities.get(3)
             ): EntitySelector(EntitySelectorConfig(domain=[COVER_DOMAIN, NUMBER_DOMAIN])),
@@ -209,10 +191,6 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_DIMMER_TARGET,
                 default=target_entities.get(1)
-            ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
-            vol.Optional(
-                CONF_CW_TARGET,
-                default=target_entities.get(2)
             ): EntitySelector(EntitySelectorConfig(domain=[LIGHT_DOMAIN, NUMBER_DOMAIN])),
             vol.Optional(
                 CONF_CURTAIN1_TARGET,

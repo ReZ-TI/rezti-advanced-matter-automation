@@ -61,13 +61,14 @@ from .const import (
     DOMAIN,
     LOGGER_NAME,
     ENDPOINT_DIMMER,
-    ENDPOINT_CW,
     ENDPOINT_CURTAIN_1,
     ENDPOINT_CURTAIN_2,
     LEVEL_CONTROL_CLUSTER,
     WINDOW_COVERING_CLUSTER,
+    COLOR_CONTROL_CLUSTER,
     LEVEL_CONTROL_CURRENT_LEVEL_ATTR,
     WINDOW_COVERING_POSITION_ATTR,
+    COLOR_TEMPERATURE_ATTRIBUTE,
     LEVEL_MAX_MATTER,
     LEVEL_MAX_HA,
     WINDOW_COVERING_MAX_MATTER,
@@ -215,13 +216,13 @@ class KnobProxyCoordinator:
             )
 
     def _create_forward_handler(
-        self, endpoint_id: int, knob_entity: str, target_entity: str
+        self, endpoint_id: int, source_entity: str, target_entity: str
     ) -> callable:
         """Create a handler for forward flow state changes."""
         
         @callback
         async def handler(event: Event) -> None:
-            """Handle knob state change and forward to target."""
+            """Handle source state change and forward to target."""
             # Debounce check: ignore if changed within debounce window
             now = datetime.now()
             if self._last_forward_time:
@@ -235,92 +236,159 @@ class KnobProxyCoordinator:
 
             self._last_forward_time = now
 
-            # Get new state
+            # Get old and new state
+            old_state: State | None = event.data.get("old_state")
             new_state: State | None = event.data.get("new_state")
             if not new_state or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                _LOGGER.debug("Ignoring invalid state for %s: %s", knob_entity, new_state)
+                _LOGGER.debug("Ignoring invalid state for %s: %s", source_entity, new_state)
                 return
 
             # Convert and forward based on endpoint type
             try:
-                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
-                    await self._forward_level_control(endpoint_id, new_state, target_entity)
+                if endpoint_id == ENDPOINT_DIMMER:
+                    await self._forward_light(endpoint_id, old_state, new_state, target_entity)
                 elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
-                    await self._forward_window_covering(endpoint_id, new_state, target_entity)
+                    await self._forward_window_covering(endpoint_id, old_state, new_state, target_entity)
             except Exception as err:
                 _LOGGER.error(
                     "Error forwarding state from %s to %s: %s",
-                    knob_entity, target_entity, err
+                    source_entity, target_entity, err
                 )
 
         return handler
 
-    async def _forward_level_control(
-        self, endpoint_id: int, state: State, target_entity: str
+    async def _forward_light(
+        self, endpoint_id: int, old_state: State | None, new_state: State, target_entity: str
     ) -> None:
-        """Forward Level Control state change to target light.
+        """Forward light changes to target light.
         
-        Converts Matter Level Control (0-254) to HA brightness (0-255).
+        Handles brightness and color temperature changes to a single target.
+        Only forwards what actually changed.
         """
-        # Get brightness from state attributes
-        brightness = state.attributes.get("brightness")
+        # Check if on/off state changed
+        old_on = old_state.state == "on" if old_state else False
+        new_on = new_state.state == "on"
         
-        if brightness is None:
-            # Try to parse from state value
-            try:
-                brightness = int(float(state.state))
-            except (ValueError, TypeError):
-                _LOGGER.debug("Could not parse brightness from state: %s", state.state)
-                return
-
-        # Convert Matter level (0-254) to HA brightness (0-255)
-        ha_brightness = round(brightness * LEVEL_MAX_HA / LEVEL_MAX_MATTER)
-        ha_brightness = max(0, min(255, ha_brightness))  # Clamp to valid range
-
-        _LOGGER.debug(
-            "Forward Level Control (endpoint %d): %d → %d for %s",
-            endpoint_id, brightness, ha_brightness, target_entity
-        )
-
-        # Call light.turn_on service
-        try:
-            await self.hass.services.async_call(
-                LIGHT_DOMAIN,
-                SERVICE_TURN_ON,
-                {ATTR_ENTITY_ID: target_entity, ATTR_BRIGHTNESS: ha_brightness},
-                blocking=False,
+        if not new_on:
+            # Light turned off
+            _LOGGER.debug(
+                "Forward Light (endpoint %d): turning off %s",
+                endpoint_id, target_entity
             )
-        except Exception as err:
-            _LOGGER.warning(
-                "Failed to control light %s: %s (device may be offline)",
-                target_entity, err
+            try:
+                await self.hass.services.async_call(
+                    LIGHT_DOMAIN,
+                    "turn_off",
+                    {ATTR_ENTITY_ID: target_entity},
+                    blocking=False,
+                )
+            except Exception as err:
+                _LOGGER.warning("Failed to turn off light %s: %s", target_entity, err)
+            return
+        
+        # Light is on - prepare service data
+        service_data = {ATTR_ENTITY_ID: target_entity}
+        has_changes = False
+        
+        # Check if brightness changed
+        old_brightness = old_state.attributes.get("brightness") if old_state else None
+        new_brightness = new_state.attributes.get("brightness")
+        
+        if new_brightness is not None and new_brightness != old_brightness:
+            ha_brightness = round(new_brightness * LEVEL_MAX_HA / LEVEL_MAX_MATTER)
+            ha_brightness = max(0, min(255, ha_brightness))
+            service_data[ATTR_BRIGHTNESS] = ha_brightness
+            has_changes = True
+            _LOGGER.debug(
+                "Forward Light (endpoint %d): brightness %s → %s → %d",
+                endpoint_id, old_brightness, new_brightness, ha_brightness
+            )
+        
+        # Check if color temperature changed
+        old_color_temp = old_state.attributes.get("color_temp_kelvin") if old_state else None
+        new_color_temp = new_state.attributes.get("color_temp_kelvin")
+        
+        if new_color_temp is not None and new_color_temp != old_color_temp:
+            service_data["color_temp_kelvin"] = int(new_color_temp)
+            has_changes = True
+            _LOGGER.debug(
+                "Forward Light (endpoint %d): color_temp %s → %s",
+                endpoint_id, old_color_temp, new_color_temp
+            )
+        
+        # Also handle turn_on if state changed from off to on
+        if not old_on and new_on:
+            has_changes = True
+            _LOGGER.debug(
+                "Forward Light (endpoint %d): turned on %s",
+                endpoint_id, target_entity
+            )
+        
+        # Only call service if we have something to change
+        if has_changes:
+            try:
+                await self.hass.services.async_call(
+                    LIGHT_DOMAIN,
+                    SERVICE_TURN_ON,
+                    service_data,
+                    blocking=False,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "Failed to control light %s: %s (device may be offline)",
+                    target_entity, err
+                )
+        else:
+            _LOGGER.debug(
+                "Forward Light (endpoint %d): no changes to forward for %s",
+                endpoint_id, target_entity
             )
 
     async def _forward_window_covering(
-        self, endpoint_id: int, state: State, target_entity: str
+        self, endpoint_id: int, old_state: State | None, new_state: State, target_entity: str
     ) -> None:
         """Forward Window Covering state change to target cover.
         
-        Converts Matter position (0-10000) to HA position (0-100).
+        Only forwards when position actually changed.
+        Handles open/closed states and current_position attribute.
         """
-        # Get position from state attributes
-        position = state.attributes.get("current_position")
+        # Get old and new positions
+        old_position = old_state.attributes.get("current_position") if old_state else None
+        new_position = new_state.attributes.get("current_position")
         
-        if position is None:
-            # Try to parse from state value
-            try:
-                position = int(float(state.state))
-            except (ValueError, TypeError):
-                _LOGGER.debug("Could not parse position from state: %s", state.state)
+        # Handle state-based position if attribute not available
+        if new_position is None:
+            if new_state.state == "open":
+                new_position = 100
+            elif new_state.state == "closed":
+                new_position = 0
+            else:
+                _LOGGER.debug(
+                    "Forward Window Covering (endpoint %d): no position in state %s",
+                    endpoint_id, new_state.state
+                )
                 return
-
-        # Convert Matter position (0-10000) to HA position (0-100)
-        ha_position = round(position * WINDOW_COVERING_MAX_HA / WINDOW_COVERING_MAX_MATTER)
+        
+        # Only forward if position changed
+        if new_position == old_position:
+            _LOGGER.debug(
+                "Forward Window Covering (endpoint %d): position unchanged (%s), skipping",
+                endpoint_id, new_position
+            )
+            return
+        
+        # Convert Matter position (0-10000) to HA position (0-100) if needed
+        # If already 0-100, pass through
+        if new_position > 100:
+            ha_position = round(new_position * WINDOW_COVERING_MAX_HA / WINDOW_COVERING_MAX_MATTER)
+        else:
+            ha_position = new_position
+        
         ha_position = max(0, min(100, ha_position))  # Clamp to valid range
 
         _LOGGER.debug(
-            "Forward Window Covering (endpoint %d): %d → %d for %s",
-            endpoint_id, position, ha_position, target_entity
+            "Forward Window Covering (endpoint %d): %s → %s → %d for %s",
+            endpoint_id, old_position, new_position, ha_position, target_entity
         )
 
         # Call cover.set_cover_position service
@@ -386,8 +454,8 @@ class KnobProxyCoordinator:
 
             # Convert and write back based on endpoint type
             try:
-                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
-                    await self._reverse_level_control(endpoint_id, new_state)
+                if endpoint_id == ENDPOINT_DIMMER:
+                    await self._reverse_light(ENDPOINT_DIMMER, new_state)
                 elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
                     await self._reverse_window_covering(endpoint_id, new_state)
             except Exception as err:
@@ -398,26 +466,28 @@ class KnobProxyCoordinator:
 
         return handler
 
-    async def _reverse_level_control(self, endpoint_id: int, state: State) -> None:
-        """Write target light state back to knob's Level Control cluster.
+    async def _reverse_light(self, endpoint_id: int, state: State) -> None:
+        """Write target light state back to knob's clusters.
         
-        Converts HA brightness (0-255) to Matter level (0-254).
+        Handles both brightness (Level Control) and color temperature (Color Control).
         """
-        brightness = state.attributes.get("brightness")
+        source_entity = self._source_entities.get(endpoint_id)
+        if not source_entity:
+            return
         
+        # Handle brightness (Level Control cluster)
+        brightness = state.attributes.get("brightness")
         if brightness is None:
-            # Light might be off
             if state.state == "off":
                 brightness = 0
             else:
                 return
-
-        # Convert HA brightness (0-255) to Matter level (0-254)
+        
         matter_level = round(brightness * LEVEL_MAX_MATTER / LEVEL_MAX_HA)
         matter_level = max(0, min(254, matter_level))
 
         _LOGGER.debug(
-            "Reverse Level Control (endpoint %d): %d → %d",
+            "Reverse Light (endpoint %d): brightness %d → %d",
             endpoint_id, brightness, matter_level
         )
 
@@ -427,16 +497,43 @@ class KnobProxyCoordinator:
             attribute_id=LEVEL_CONTROL_CURRENT_LEVEL_ATTR,
             value=matter_level,
         )
+        
+        # Handle color temperature (Color Control cluster)
+        color_temp_kelvin = state.attributes.get("color_temp_kelvin")
+        if color_temp_kelvin:
+            # Convert kelvin to mireds (1,000,000 / kelvin)
+            mireds = round(1000000 / color_temp_kelvin)
+            # Clamp to valid Matter range (typically 153-370)
+            mireds = max(153, min(370, mireds))
+            
+            _LOGGER.debug(
+                "Reverse Light (endpoint %d): color_temp_kelvin %d → mireds %d",
+                endpoint_id, color_temp_kelvin, mireds
+            )
+            
+            await self._write_matter_attribute(
+                endpoint_id=endpoint_id,
+                cluster_id=COLOR_CONTROL_CLUSTER,
+                attribute_id=COLOR_TEMPERATURE_ATTRIBUTE,
+                value=mireds,
+            )
 
     async def _reverse_window_covering(self, endpoint_id: int, state: State) -> None:
         """Write target cover state back to knob's Window Covering cluster.
         
         Converts HA position (0-100) to Matter position (0-10000).
+        Handles open/closed states when position attribute is missing.
         """
         position = state.attributes.get("current_position")
         
+        # Try to infer from state if attribute not available
         if position is None:
-            return
+            if state.state == "open":
+                position = 100
+            elif state.state == "closed":
+                position = 0
+            else:
+                return
 
         # Convert HA position (0-100) to Matter position (0-10000)
         matter_position = round(position * WINDOW_COVERING_MAX_MATTER / WINDOW_COVERING_MAX_HA)
@@ -495,8 +592,8 @@ class KnobProxyCoordinator:
                 continue
 
             try:
-                if endpoint_id in (ENDPOINT_DIMMER, ENDPOINT_CW):
-                    await self._reverse_level_control(endpoint_id, state)
+                if endpoint_id == ENDPOINT_DIMMER:
+                    await self._reverse_light(ENDPOINT_DIMMER, state)
                 elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
                     await self._reverse_window_covering(endpoint_id, state)
             except Exception as err:
