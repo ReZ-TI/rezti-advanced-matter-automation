@@ -1,6 +1,6 @@
 """Constants for the Matter Knob Proxy integration."""
 
-DOMAIN = "matter_knob_proxy"
+DOMAIN = "rezti_matter_knoblink"
 
 # Matter Vendor and Product IDs for the knob device
 # These should match your hardware firmware
