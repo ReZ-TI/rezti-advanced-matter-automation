@@ -193,16 +193,25 @@ class KnobProxyCoordinator:
         Listens for state changes on source entities and forwards commands
         to mapped target entities.
         """
+        _LOGGER.debug("Setting up forward listeners. Sources: %s, Targets: %s", 
+                     self._source_entities, self._mappings)
+        
         for endpoint_id, source_entity in self._source_entities.items():
+            _LOGGER.debug("Checking endpoint %d: source=%s", endpoint_id, source_entity)
+            
             if not source_entity:
+                _LOGGER.debug("Endpoint %d: no source configured, skipping", endpoint_id)
                 continue  # No source configured for this endpoint
                 
             target_entity = self._mappings.get(endpoint_id)
+            _LOGGER.debug("Endpoint %d: target=%s", endpoint_id, target_entity)
             
             if not target_entity:
+                _LOGGER.debug("Endpoint %d: no target configured, skipping", endpoint_id)
                 continue  # No target configured for this endpoint
 
             # Create listener for this source entity
+            _LOGGER.debug("Endpoint %d: creating state change listener", endpoint_id)
             unsub = async_track_state_change_event(
                 self.hass,
                 [source_entity],
@@ -210,8 +219,8 @@ class KnobProxyCoordinator:
             )
             
             self._listeners[f"forward_{endpoint_id}"] = unsub
-            _LOGGER.debug(
-                "Forward listener: %s (endpoint %d) → %s",
+            _LOGGER.info(
+                "Forward listener created: %s (endpoint %d) → %s",
                 source_entity, endpoint_id, target_entity
             )
 
@@ -223,6 +232,8 @@ class KnobProxyCoordinator:
         @callback
         async def handler(event: Event) -> None:
             """Handle source state change and forward to target."""
+            _LOGGER.debug("Handler triggered for endpoint %d, source=%s", endpoint_id, source_entity)
+            
             # Debounce check: ignore if changed within debounce window
             now = datetime.now()
             if self._last_forward_time:
@@ -239,10 +250,20 @@ class KnobProxyCoordinator:
             # Get old and new state
             old_state: State | None = event.data.get("old_state")
             new_state: State | None = event.data.get("new_state")
+            
+            _LOGGER.debug(
+                "State change for %s: old=%s, new=%s",
+                source_entity,
+                old_state.state if old_state else None,
+                new_state.state if new_state else None
+            )
+            
             if not new_state or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 _LOGGER.debug("Ignoring invalid state for %s: %s", source_entity, new_state)
                 return
 
+            _LOGGER.debug("Forwarding state change from %s to %s", source_entity, target_entity)
+            
             # Convert and forward based on endpoint type
             try:
                 if endpoint_id == ENDPOINT_DIMMER:
@@ -326,6 +347,10 @@ class KnobProxyCoordinator:
         
         # Only call service if we have something to change
         if has_changes:
+            _LOGGER.debug(
+                "Calling light.turn_on for %s with data: %s",
+                target_entity, service_data
+            )
             try:
                 await self.hass.services.async_call(
                     LIGHT_DOMAIN,
@@ -333,6 +358,7 @@ class KnobProxyCoordinator:
                     service_data,
                     blocking=False,
                 )
+                _LOGGER.debug("light.turn_on call succeeded for %s", target_entity)
             except Exception as err:
                 _LOGGER.warning(
                     "Failed to control light %s: %s (device may be offline)",
@@ -352,9 +378,22 @@ class KnobProxyCoordinator:
         Only forwards when position actually changed.
         Handles open/closed states and current_position attribute.
         """
+        _LOGGER.debug(
+            "Forward Window Covering (endpoint %d): old_state=%s, new_state=%s, target=%s",
+            endpoint_id,
+            old_state.state if old_state else None,
+            new_state.state,
+            target_entity
+        )
+        
         # Get old and new positions
         old_position = old_state.attributes.get("current_position") if old_state else None
         new_position = new_state.attributes.get("current_position")
+        
+        _LOGGER.debug(
+            "Forward Window Covering (endpoint %d): old_position=%s, new_position=%s",
+            endpoint_id, old_position, new_position
+        )
         
         # Handle state-based position if attribute not available
         if new_position is None:
@@ -363,8 +402,8 @@ class KnobProxyCoordinator:
             elif new_state.state == "closed":
                 new_position = 0
             else:
-                _LOGGER.debug(
-                    "Forward Window Covering (endpoint %d): no position in state %s",
+                _LOGGER.warning(
+                    "Forward Window Covering (endpoint %d): no position in state %s, cannot forward",
                     endpoint_id, new_state.state
                 )
                 return
@@ -372,8 +411,8 @@ class KnobProxyCoordinator:
         # Only forward if position changed
         if new_position == old_position:
             _LOGGER.debug(
-                "Forward Window Covering (endpoint %d): position unchanged (%s), skipping",
-                endpoint_id, new_position
+                "Forward Window Covering (endpoint %d): position unchanged (%s vs %s), skipping",
+                endpoint_id, old_position, new_position
             )
             return
         
@@ -392,6 +431,10 @@ class KnobProxyCoordinator:
         )
 
         # Call cover.set_cover_position service
+        _LOGGER.debug(
+            "Calling cover.set_cover_position for %s with position=%d",
+            target_entity, ha_position
+        )
         try:
             await self.hass.services.async_call(
                 COVER_DOMAIN,
@@ -399,6 +442,7 @@ class KnobProxyCoordinator:
                 {ATTR_ENTITY_ID: target_entity, ATTR_POSITION: ha_position},
                 blocking=False,
             )
+            _LOGGER.debug("cover.set_cover_position call succeeded for %s", target_entity)
         except Exception as err:
             _LOGGER.warning(
                 "Failed to control cover %s: %s (device may be offline)",
