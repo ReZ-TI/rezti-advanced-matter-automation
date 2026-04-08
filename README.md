@@ -1,6 +1,6 @@
-# Rez-Ti Matter KnobLink
+# ReZ-TI Matter KnobLink
 
-A professional Home Assistant integration by **Rez-Ti** that provides seamless bidirectional synchronization between Matter knob controllers and Home Assistant entities.
+A professional Home Assistant integration by **ReZ-TI** that provides seamless bidirectional synchronization between Matter knob controllers and Home Assistant entities.
 
 ## Overview
 
@@ -35,7 +35,7 @@ Matter KnobLink bridges your Matter-compatible knob controllers with existing Ho
 
 1. Open HACS → Custom Repositories
 2. Add: `https://github.com/rez-ti/matter-knoblink`
-3. Install **Rez-Ti Matter KnobLink**
+3. Install **ReZ-TI Matter KnobLink**
 4. Restart Home Assistant
 
 ### Step 2: Manual Installation
@@ -58,7 +58,7 @@ Restart Home Assistant.
 ### Step 4: Configure KnobLink
 
 1. **Settings** → **Devices & Services** → **Add Integration**
-2. Search for **Rez-Ti Matter KnobLink**
+2. Search for **ReZ-TI Matter KnobLink**
 3. Select your knob's source entities
 4. Map to target entities:
    - **Dimmer Source** → Light target (controls brightness + color temp)
@@ -78,7 +78,7 @@ When targets are controlled via app, voice, or automations, the knob's LED ring 
 
 ### Reconfiguration
 
-1. Go to **Settings** → **Devices & Services** → **Rez-Ti Matter KnobLink**
+1. Go to **Settings** → **Devices & Services** → **ReZ-TI Matter KnobLink**
 2. Click **Configure**
 3. Update mappings
 4. Save — changes apply immediately
@@ -138,9 +138,9 @@ custom_components/rezti_matter_knoblink/
 └── strings.json      # UI translations
 ```
 
-## About Rez-Ti
+## About Rez-TI
 
-**Rez-Ti** creates professional smart home solutions that bridge cutting-edge protocols with elegant user experiences.
+**Rez-TI** creates professional smart home solutions that bridge cutting-edge protocols with elegant user experiences.
 
 ## License
 
