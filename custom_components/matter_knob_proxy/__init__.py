@@ -235,7 +235,9 @@ class KnobProxyCoordinator:
         @callback
         async def handler(event: Event) -> None:
             """Handle source state change and forward to target."""
-            _LOGGER.debug("Handler triggered for endpoint %s, source=%s", endpoint_id, source_entity)
+            # Ensure endpoint_id is int (defensive - config entry stores as string)
+            ep_id = int(endpoint_id)
+            _LOGGER.debug("Handler triggered for endpoint %s, source=%s", ep_id, source_entity)
             
             # Debounce check: ignore if changed within debounce window
             now = datetime.now()
@@ -243,8 +245,8 @@ class KnobProxyCoordinator:
                 elapsed = (now - self._last_forward_time).total_seconds()
                 if elapsed < DEBOUNCE_FORWARD:
                     _LOGGER.debug(
-                        "Debouncing forward event for endpoint %d (%.3fs elapsed)",
-                        endpoint_id, elapsed
+                        "Debouncing forward event for endpoint %s (%.3fs elapsed)",
+                        ep_id, elapsed
                     )
                     return
 
@@ -269,10 +271,10 @@ class KnobProxyCoordinator:
             
             # Convert and forward based on endpoint type
             try:
-                if endpoint_id == ENDPOINT_DIMMER:
-                    await self._forward_light(endpoint_id, old_state, new_state, target_entity)
-                elif endpoint_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
-                    await self._forward_window_covering(endpoint_id, old_state, new_state, target_entity)
+                if ep_id == ENDPOINT_DIMMER:
+                    await self._forward_light(ep_id, old_state, new_state, target_entity)
+                elif ep_id in (ENDPOINT_CURTAIN_1, ENDPOINT_CURTAIN_2):
+                    await self._forward_window_covering(ep_id, old_state, new_state, target_entity)
             except Exception as err:
                 _LOGGER.error(
                     "Error forwarding state from %s to %s: %s",
