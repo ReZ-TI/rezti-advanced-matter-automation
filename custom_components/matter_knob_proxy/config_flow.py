@@ -166,6 +166,8 @@ class MatterKnobProxyOptionsFlow(config_entries.OptionsFlow):
                     "target_entities": target_entities,
                 },
             )
+            # Reload the integration to apply changes
+            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
         # Pre-fill current values from entry data
