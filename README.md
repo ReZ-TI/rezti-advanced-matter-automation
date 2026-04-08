@@ -1,255 +1,147 @@
-# Matter Knob Proxy
+# Rez-Ti Matter KnobLink
 
-A custom Home Assistant integration that provides bidirectional synchronization between a Matter knob controller and Home Assistant entities (lights and covers).
+A professional Home Assistant integration by **Rez-Ti** that provides seamless bidirectional synchronization between Matter knob controllers and Home Assistant entities.
 
 ## Overview
 
-This integration acts as a proxy between a self-commissioned Matter knob device and existing Home Assistant entities. The knob appears as 4 separate endpoints in Home Assistant via the native Matter integration, and this proxy maps those endpoints to control other devices.
+Matter KnobLink bridges your Matter-compatible knob controllers with existing Home Assistant devices. The knob appears as native endpoints in Home Assistant via the Matter integration, and KnobLink intelligently maps those endpoints to control your lights, curtains, and more.
 
 ### Supported Endpoints
 
 | Endpoint | Cluster Type | Purpose | Target Domain |
 |----------|-------------|---------|---------------|
-| 1 | Level Control (0x0008) | Dimmer (Brightness) | `light` |
-| 2 | Level Control (0x0008) | CW (Color Temperature) | `light` or `number` |
-| 3 | Window Covering (0x0102) | Curtain 1 | `cover` |
-| 4 | Window Covering (0x0102) | Curtain 2 | `cover` |
+| 1 | Level Control (0x0008) + Color Control (0x0300) | Smart Light (Brightness + Color Temperature) | `light` |
+| 3 | Window Covering (0x0102) | Curtain / Shade 1 | `cover` |
+| 4 | Window Covering (0x0102) | Curtain / Shade 2 | `cover` |
 
 ## Features
 
-- **Bidirectional Sync**: Changes made via the knob are reflected on target entities, and changes made via apps/voice are reflected back on the knob's LED ring
-- **Debounced Forward Flow**: Prevents event floods during fast knob rotation (100ms debounce)
-- **Circular Protection**: Prevents update loops by skipping reverse sync when user is actively controlling (2s window)
-- **Multiple Knob Support**: Configure multiple knobs, each controlling different targets
-- **Runtime Reconfiguration**: Change mappings without re-commissioning the hardware
+- **Bidirectional Sync**: Knob controls targets; app/voice controls update knob LED
+- **Smart Debouncing**: 100ms debounce prevents event floods during fast rotation
+- **Loop Protection**: 2-second circular protection prevents update loops
+- **Multi-Knob Support**: Configure multiple knobs for different zones
+- **Hot Reconfiguration**: Change mappings without hardware re-commissioning
+- **Selective Forwarding**: Only changed attributes are forwarded (brightness or color temp)
 
 ## Installation
 
 ### Prerequisites
 
 1. Home Assistant with Matter integration configured
-2. A Matter knob device with the supported endpoint configuration
-3. Target entities (lights and covers) already commissioned in Home Assistant
+2. A Matter knob device with supported endpoint configuration
+3. Target entities (lights and covers) already in Home Assistant
 
-### Step 1: Copy Files
+### Step 1: Install via HACS (Recommended)
 
-Copy the `matter_knob_proxy` folder to your Home Assistant `custom_components` directory:
+1. Open HACS → Custom Repositories
+2. Add: `https://github.com/rez-ti/matter-knoblink`
+3. Install **Rez-Ti Matter KnobLink**
+4. Restart Home Assistant
+
+### Step 2: Manual Installation
 
 ```bash
-# Create custom_components if it doesn't exist
+# Copy to custom_components
 mkdir -p /config/custom_components
-
-# Copy the integration
-cp -r matter_knob_proxy /config/custom_components/
+cp -r rezti_matter_knoblink /config/custom_components/
 ```
 
-### Step 2: Configure VID/PID (Important!)
+Restart Home Assistant.
 
-Edit `custom_components/matter_knob_proxy/const.py` and update the vendor/product IDs to match your knob's firmware:
+### Step 3: Commission Your Knob
 
-```python
-DEFAULT_VID = "0xFFF1"  # Replace with your actual Vendor ID
-DEFAULT_PID = "0x8001"  # Replace with your actual Product ID
-```
+1. Open Home Assistant Companion App
+2. **Settings** → **Devices & Services** → **Add Integration** → **Matter**
+3. Scan your knob's QR code
+4. The knob appears as native entities (light, cover)
 
-If you don't know your VID/PID, you can check the device info in Home Assistant after commissioning the knob via the Matter integration.
+### Step 4: Configure KnobLink
 
-### Step 3: Restart Home Assistant
-
-Restart Home Assistant to load the custom integration:
-
-```yaml
-# configuration.yaml (if you need to trigger a restart)
-homeassistant:
-  # Your existing config
-```
-
-### Step 4: Commission the Knob (Hardware Setup)
-
-1. Open the Home Assistant Companion App
-2. Go to **Settings** → **Devices & Services**
-3. Click **Add Integration** → **Matter**
-4. Scan the QR code on your knob device
-5. The knob will appear as 4 separate entities:
-   - `light.knob_dimmer_endpoint_1`
-   - `light.knob_cw_endpoint_2` (or number entity)
-   - `cover.knob_curtain_1_endpoint_3`
-   - `cover.knob_curtain_2_endpoint_4`
-
-### Step 5: Configure the Proxy
-
-1. Go to **Settings** → **Devices & Services**
-2. Click **Add Integration** → **Matter Knob Proxy**
-3. Select your knob device from the dropdown
-4. Map each control to a target entity:
-   - **Dimmer Control**: Select a light entity (e.g., "Living Room Light")
-   - **CW Control**: Select a light or number entity for color temperature
-   - **Curtain 1**: Select a cover entity (e.g., "Living Room Curtain")
-   - **Curtain 2**: Select a cover entity (e.g., "Bedroom Curtain")
-5. Click **Submit**
+1. **Settings** → **Devices & Services** → **Add Integration**
+2. Search for **Rez-Ti Matter KnobLink**
+3. Select your knob's source entities
+4. Map to target entities:
+   - **Dimmer Source** → Light target (controls brightness + color temp)
+   - **Curtain 1 Source** → Cover target 1
+   - **Curtain 2 Source** → Cover target 2
+5. Save — integration reloads automatically
 
 ## Usage
 
 ### Direct Control
 
-Rotate the knob to control the mapped light brightness or curtain position. The target entity will update within 200ms.
+Rotate the knob to control mapped devices. Response time is under 200ms.
 
 ### Visual Feedback
 
-When you control a target entity via the Home Assistant app, Alexa, or automations, the knob's LED ring will update to reflect the current state (via reverse sync).
-
-### Changing Modes
-
-If your knob firmware supports mode switching (e.g., pressing to cycle between Dimmer/CW/Curtain controls), different targets will respond based on the active mode.
+When targets are controlled via app, voice, or automations, the knob's LED ring updates automatically.
 
 ### Reconfiguration
 
-To change target mappings:
-
-1. Go to **Settings** → **Devices & Services**
-2. Find **Matter Knob Proxy** and click **Configure**
-3. Update the entity mappings
-4. Click **Submit** — changes take effect immediately
+1. Go to **Settings** → **Devices & Services** → **Rez-Ti Matter KnobLink**
+2. Click **Configure**
+3. Update mappings
+4. Save — changes apply immediately
 
 ## Architecture
 
 ### Forward Flow (Knob → Target)
 
 ```
-Knob Rotation → Matter Integration → HA State Change
-                                               ↓
-                                        [This Integration]
-                                               ↓
-                                     service_call to Target
+Knob Rotation → Matter Integration → HA State Change → KnobLink → Target Service Call
 ```
 
 ### Reverse Flow (Target → Knob)
 
 ```
-App/Voice/Automation → Target State Change
-                                               ↓
-                                        [This Integration]
-                                               ↓
-                                     write_attribute to Matter Server
-                                               ↓
-                                        Knob LED Update
+App/Voice/Automation → Target State Change → KnobLink → Matter Server → Knob LED
 ```
 
-### State Conversion
+### State Conversions
 
-**Level Control (Brightness)**:
-- Forward: Matter (0-254) → HA Light (0-255): `round(level * 255 / 254)`
-- Reverse: HA Light (0-255) → Matter (0-254): `round(brightness * 254 / 255)`
-
-**Window Covering (Position)**:
-- Forward: Matter (0-10000) → HA Cover (0-100): `round(value / 100)`
-- Reverse: HA Cover (0-100) → Matter (0-10000): `value * 100`
+| Attribute | Forward (Knob → HA) | Reverse (HA → Knob) |
+|-----------|---------------------|---------------------|
+| Brightness | Matter 0-254 → HA 0-255 | HA 0-255 → Matter 0-254 |
+| Color Temp | Kelvin (preserved) | Kelvin → Mireds (1,000,000/K) |
+| Position | Matter 0-10000 → HA 0-100 | HA 0-100 → Matter 0-10000 |
 
 ### Safety Mechanisms
 
-1. **Forward Debounce (100ms)**: Ignores knob state changes that occur within 100ms of the previous change. Prevents flooding during fast rotation.
-
-2. **Circular Protection (2s)**: After a forward flow event, reverse sync is disabled for 2 seconds. This prevents loops where:
-   - User rotates knob → Forward to target → Target state changes → Reverse to knob → Knob state changes → Forward to target...
-
-3. **Graceful Degradation**: If a target device is offline, the error is logged but the knob continues to work locally. Commands are not queued indefinitely.
+1. **Forward Debounce (100ms)**: Prevents flooding during fast rotation
+2. **Circular Protection (2s)**: Breaks feedback loops
+3. **Graceful Degradation**: Offline targets don't break the knob
 
 ## Troubleshooting
 
-### Knob Not Detected
+| Issue | Solution |
+|-------|----------|
+| Knob not detected | Commission via Matter integration first |
+| Forward sync fails | Verify source/target entities exist and are available |
+| Reverse sync fails | Check Matter Server connectivity |
+| Delayed response | Normal — 100ms debounce is intentional |
 
-1. Ensure the knob is commissioned via the Matter integration first
-2. Check that `DEFAULT_VID` and `DEFAULT_PID` in `const.py` match your device
-3. Look for device name containing "knob" as a fallback match
-4. Check Home Assistant logs for discovery messages
-
-### Forward Sync Not Working
-
-1. Verify entity mappings in the integration configuration
-2. Check that target entities exist and are available
-3. Review logs for service call errors
-4. Test the target entity manually to ensure it responds to services
-
-### Reverse Sync Not Working
-
-1. Reverse sync requires communication with the Matter Server
-2. Check if the Matter integration exposes a client in `hass.data["matter"]`
-3. If using a standalone Matter Server, you may need to implement direct WebSocket communication
-4. Check logs for WebSocket connection errors
-
-### Delayed Response
-
-1. The forward flow has a 100ms debounce — this is intentional to prevent floods
-2. If response feels sluggish, check target device network connectivity
-3. Consider using local push if your target devices support it
+Enable debug logging:
+```yaml
+logger:
+  logs:
+    custom_components.rezti_matter_knoblink: debug
+```
 
 ## Development
 
-### File Structure
-
 ```
-custom_components/matter_knob_proxy/
-├── __init__.py      # Integration setup, coordinator, event listeners
-├── config_flow.py   # UI configuration flow
-├── const.py         # Constants (DOMAIN, VID, PID, CLUSTER_IDS)
-├── manifest.json    # Integration metadata
-├── services.yaml    # Optional manual sync services
-└── strings.json     # Translations for UI
+custom_components/rezti_matter_knoblink/
+├── __init__.py       # Coordinator, event listeners
+├── config_flow.py    # UI configuration
+├── const.py          # Constants, cluster IDs
+├── manifest.json     # Integration metadata
+└── strings.json      # UI translations
 ```
 
-### Testing Without Hardware
+## About Rez-Ti
 
-To test the integration without a physical knob:
-
-1. Create mock entities in Home Assistant:
-```yaml
-# configuration.yaml
-light:
-  - platform: template
-    lights:
-      mock_knob_dimmer:
-        turn_on:
-          - service: persistent_notification.create
-            data:
-              message: "Knob dimmer turned on"
-        turn_off:
-          - service: persistent_notification.create
-            data:
-              message: "Knob dimmer turned off"
-```
-
-2. Manually trigger state changes:
-```yaml
-service: light.turn_on
-target:
-  entity_id: light.mock_knob_dimmer
-data:
-  brightness: 128
-```
-
-3. Observe the proxy behavior in Home Assistant logs
-
-### Extending the Integration
-
-To add support for additional endpoint types:
-
-1. Add new endpoint constants in `const.py`
-2. Update `ENDPOINT_CONFIG_MAP` with the new mapping
-3. Add conversion logic in `KnobProxyCoordinator` for forward and reverse flows
-4. Update `config_flow.py` to include the new selector
-
-## Known Limitations
-
-1. **Matter Server Dependency**: Reverse sync requires access to the Matter Server WebSocket API. The current implementation attempts to use the matter integration's client, but may need adjustment based on your setup.
-
-2. **No Command Queuing**: If the Matter Server is unavailable, reverse sync commands are not queued. Only the latest state is maintained.
-
-3. **Single Instance Per Knob**: Each physical knob requires its own config entry. Multiple knobs are supported, but each is configured separately.
-
-## Support
-
-For issues, questions, or contributions, please refer to the project's issue tracker or documentation.
+**Rez-Ti** creates professional smart home solutions that bridge cutting-edge protocols with elegant user experiences.
 
 ## License
 
-This integration is provided as-is for educational and personal use. Modify and distribute according to your needs.
+MIT License — See LICENSE file for details.
