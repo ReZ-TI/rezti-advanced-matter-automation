@@ -197,6 +197,7 @@ class KnobProxyCoordinator:
                      self._source_entities, self._mappings)
         
         for endpoint_id, source_entity in self._source_entities.items():
+            endpoint_id = int(endpoint_id)  # Config entry stores keys as strings
             _LOGGER.debug("Checking endpoint %d: source=%s", endpoint_id, source_entity)
             
             if not source_entity:
@@ -228,11 +229,13 @@ class KnobProxyCoordinator:
         self, endpoint_id: int, source_entity: str, target_entity: str
     ) -> callable:
         """Create a handler for forward flow state changes."""
+        # Ensure endpoint_id is int (defensive)
+        endpoint_id = int(endpoint_id)
         
         @callback
         async def handler(event: Event) -> None:
             """Handle source state change and forward to target."""
-            _LOGGER.debug("Handler triggered for endpoint %d, source=%s", endpoint_id, source_entity)
+            _LOGGER.debug("Handler triggered for endpoint %s, source=%s", endpoint_id, source_entity)
             
             # Debounce check: ignore if changed within debounce window
             now = datetime.now()
@@ -456,6 +459,7 @@ class KnobProxyCoordinator:
         the knob's Matter clusters for visual feedback.
         """
         for endpoint_id, target_entity in self._mappings.items():
+            endpoint_id = int(endpoint_id)  # Config entry stores keys as strings
             if not target_entity:
                 continue
 
@@ -628,6 +632,7 @@ class KnobProxyCoordinator:
         _LOGGER.debug("Performing initial state sync")
 
         for endpoint_id, target_entity in self._mappings.items():
+            endpoint_id = int(endpoint_id)  # Config entry stores keys as strings
             if not target_entity:
                 continue
 
