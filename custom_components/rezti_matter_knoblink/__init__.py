@@ -1,4 +1,4 @@
-"""The Matter Knob Proxy integration.
+"""The ReZ-TI Matter KnobLink integration.
 
 This integration provides bidirectional synchronization between a Matter knob device
 and Home Assistant entities (lights and covers).
@@ -85,12 +85,12 @@ ListenerHandles = dict[str, CALLBACK_TYPE]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Matter Knob Proxy from a config entry.
+    """Set up ReZ-TI Matter KnobLink from a config entry.
     
     Called when the integration is first set up or after HA restart.
     Establishes all event listeners and performs initial state sync.
     """
-    _LOGGER.debug("Setting up Matter Knob Proxy for entry %s", entry.entry_id)
+    _LOGGER.debug("Setting up ReZ-TI Matter KnobLink for entry %s", entry.entry_id)
 
     # Initialize domain data if needed
     if DOMAIN not in hass.data:
@@ -116,7 +116,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     Cleans up all listeners and WebSocket connections.
     """
-    _LOGGER.debug("Unloading Matter Knob Proxy entry %s", entry.entry_id)
+    _LOGGER.debug("Unloading ReZ-TI Matter KnobLink entry %s", entry.entry_id)
 
     coordinator: KnobProxyCoordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
     if coordinator:
@@ -127,7 +127,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the config entry when options change."""
-    _LOGGER.debug("Reloading Matter Knob Proxy entry %s", entry.entry_id)
+    _LOGGER.debug("Reloading ReZ-TI Matter KnobLink entry %s", entry.entry_id)
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)
 
@@ -166,7 +166,7 @@ class KnobProxyCoordinator:
 
     async def async_setup(self) -> None:
         """Set up the coordinator and establish listeners."""
-        _LOGGER.info("Setting up Matter Knob Proxy")
+        _LOGGER.info("Setting up ReZ-TI Matter KnobLink")
         _LOGGER.debug("Source entities: %s", self._source_entities)
         _LOGGER.debug("Target entities: %s", self._mappings)
 
@@ -179,7 +179,7 @@ class KnobProxyCoordinator:
         # Perform initial sync (Target → Source)
         await self._perform_initial_sync()
 
-        _LOGGER.info("Matter Knob Proxy setup complete")
+        _LOGGER.info("ReZ-TI Matter KnobLink setup complete")
 
     def _load_mappings(self) -> None:
         """Load entity mappings from config entry data (legacy - not used anymore)."""
@@ -660,7 +660,7 @@ class KnobProxyCoordinator:
         
         Called on integration unload or HA shutdown.
         """
-        _LOGGER.debug("Shutting down Matter Knob Proxy coordinator")
+        _LOGGER.debug("Shutting down ReZ-TI Matter KnobLink coordinator")
 
         # Cancel all listeners
         for name, unsub in self._listeners.items():

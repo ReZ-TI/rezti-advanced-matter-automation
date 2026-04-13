@@ -1,4 +1,4 @@
-# Services for Matter Knob Proxy
+# Services for ReZ-TI Matter KnobLink
 
 # Force a complete bidirectional sync between all mapped entities
 # and their corresponding knob endpoints
@@ -8,7 +8,7 @@ sync_all:
   fields:
     config_entry_id:
       name: Config Entry
-      description: The Matter Knob Proxy configuration entry to sync (optional, defaults to all).
+      description: The ReZ-TI Matter KnobLink configuration entry to sync (optional, defaults to all).
       example: "01ABC123DEF456"
       selector:
         text:
@@ -20,7 +20,7 @@ sync_endpoint:
   fields:
     config_entry_id:
       name: Config Entry
-      description: The Matter Knob Proxy configuration entry.
+      description: The ReZ-TI Matter KnobLink configuration entry.
       required: true
       selector:
         text:

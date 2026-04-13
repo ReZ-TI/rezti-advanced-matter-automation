@@ -1,4 +1,4 @@
-"""Config flow for Matter Knob Proxy integration."""
+"""Config flow for ReZ-TI Matter KnobLink integration."""
 from __future__ import annotations
 
 import logging
@@ -31,7 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class MatterKnobProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Matter Knob Proxy."""
+    """Handle a config flow for ReZ-TI Matter KnobLink."""
 
     VERSION = 1
 

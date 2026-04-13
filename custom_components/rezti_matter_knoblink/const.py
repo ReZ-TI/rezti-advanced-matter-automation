@@ -1,4 +1,4 @@
-"""Constants for the Matter Knob Proxy integration."""
+"""Constants for the ReZ-TI Matter KnobLink integration."""
 
 DOMAIN = "rezti_matter_knoblink"
 
